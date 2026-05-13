@@ -35,7 +35,7 @@ func StartClient() {
 
 	request := "GET / HTTP/1.1\r\n" +
 		"Host: httpbin.org\r\n" +
-		"Connection: close\r\n" +
+		"Connection: keep-alive\r\n" +
 		"\r\n"
 
 	listener.Write([]byte(request))

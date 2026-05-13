@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"strconv"
 	"strings"
 )
 
@@ -40,31 +41,144 @@ func StartTCPServer() {
 }
 */
 
-func handleConnection(conn net.Conn) {
-	defer conn.Close() // always close when done
-
-	scanner := bufio.NewReader(conn)
-	line, _ := scanner.ReadString('\n')
-	if !validMethod(line) {
-		conn.Write([]byte("Error 405" + "\n"))
-		return
-	}
-	response := "HTTP/1.1 200\r\n" + "\r\n"
-
-	for {
-		line, _ := scanner.ReadString('\n')
-		if line == "\r\n" || line == "\n" || line == "" {
-			break
-		}
-
-		fmt.Println("Received: ", line)
-		//response += line + "\r\n"
-	}
-	response += "aba" + "\r\n"
-	conn.Write([]byte(response))
+type request struct {
+	Method   string
+	Path     string
+	Protocol string
+	Headers  map[string]string
+	Body     string
 }
 
-func validMethod(line string) bool {
+/*
+func sortRequest(conn net.Conn) *request {
+	req := request{Headers: make(map[string]string)}
+
+	// Separate Header and Body
+	parts := strings.Split(str, "\r\n\r\n")
+	headerSection := parts[0]
+	if len(parts) > 1 {
+		req.Body = parts[1]
+	}
+
+	// Split Header section into lines
+	lines := strings.Split(headerSection, "\r\n")
+
+	// Parse Request Line
+	requestLine := strings.Split(lines[0], " ")
+	if len(requestLine) >= 2 {
+		req.Method = requestLine[0]
+		req.Url = requestLine[1]
+	} else {
+		fmt.Printf("Not valid request")
+	}
+
+	// Parse Headers
+	for i := 1; i < len(lines); i++ {
+		headerPart := strings.SplitN(lines[i], ": ", 2)
+		if len(headerPart) == 2 {
+			req.Headers[headerPart[0]] = headerPart[1]
+		}
+	}
+
+	return &req
+
+}
+*/
+
+func sortRequest(conn net.Conn) *request {
+	req := request{Headers: make(map[string]string)}
+	var contentLength int
+	total := 0
+	scanner := bufio.NewReader(conn)
+
+	// 1. Deal with first line(Method, Path, Protocol)
+	line, err := scanner.ReadString('\n')
+	if err != nil {
+		fmt.Println("Error with ReadString: ", err)
+		return nil
+	}
+	if !validHead(line, &req) {
+		fmt.Println("Error 405 Method Not Allowed")
+		conn.Write([]byte("HTTP/1.1 405 Method Not Allowed\r\n\r\n"))
+		return nil
+	}
+	total += len(line) // Add number of bytes for next contentLength check
+
+	for {
+		line, err := scanner.ReadString('\n')
+		if err != nil {
+			fmt.Println("Error with ReadString: ", err)
+			return nil
+		}
+		total += len(line)
+
+		if strings.Contains(line, "Content-Length:") {
+			contentLength, err = strconv.Atoi(strings.SplitN(line, " ", 2)[1])
+			if err != nil {
+				fmt.Println("Error with strconv: ", err)
+				return nil
+			}
+			break
+
+		} else {
+			continue
+		}
+	}
+
+	for total < contentLength {
+
+	}
+}
+
+/*
+func handleConnection(conn net.Conn) {
+	defer conn.Close()
+
+	scanner := bufio.NewReader(conn)
+
+	for {
+		requestLine, err := scanner.ReadString('\n')
+		if err != nil {
+			return
+		}
+
+		if !validMethod(requestLine) {
+			conn.Write([]byte("HTTP/1.1 405 Method Not Allowed\r\n\r\n"))
+			return
+		}
+
+		keepAlive := true
+		for {
+			line, err := scanner.ReadString('\n')
+			if err != nil {
+				return
+			}
+			if line == "\r\n" || line == "\n" || line == "" {
+				break
+			}
+			fmt.Println("Received: ", line)
+			if strings.EqualFold(strings.TrimSpace(line), "connection: close") {
+				keepAlive = false
+			}
+		}
+
+		response := "HTTP/1.1 200 OK\r\n"
+		if keepAlive {
+			response += "Connection: keep-alive\r\n"
+		} else {
+			response += "Connection: close\r\n"
+		}
+		response += "\r\naba\r\n"
+		conn.Write([]byte(response))
+
+		if !keepAlive {
+			return
+		}
+	}
+}
+*/
+
+func validHead(line string, req *request) bool {
 	methods := map[string]struct{}{
 		"GET":    {},
 		"SET":    {},
@@ -72,17 +186,29 @@ func validMethod(line string) bool {
 		"DELETE": {},
 	}
 
-	slices := strings.Split(line, " ")
-	if len(slices) != 3 {
+	headParts := strings.Split(line, " ")
+	if len(headParts) != 3 {
 		return false
 	}
 
-	_, methodExist := methods[slices[0]]
-	if (!methodExist) || slices[2] != "HTTP/1.1\r\n" {
-		fmt.Println(slices[2])
+	_, methodExist := methods[headParts[0]]
+	if (!methodExist) || headParts[2] != "HTTP/1.1\r\n" {
+		fmt.Println(headParts[2])
 		return false
 	}
+
+	req.Method = headParts[0]
+	req.Path = headParts[1]
+	req.Protocol = headParts[2]
 	return true
+}
+
+func handleConnection(conn net.Conn) {
+	defer conn.Close()
+
+	//scanner := bufio.NewReader()
+	//req := sortRequest(conn)
+
 }
 
 func StartServer() {
@@ -90,7 +216,7 @@ func StartServer() {
 	if err != nil {
 		panic(err)
 	}
-	//defer listener.Close()
+	defer listener.Close()
 	fmt.Println("Server listening on :8080")
 
 	for {
