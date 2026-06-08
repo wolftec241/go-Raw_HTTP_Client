@@ -3,6 +3,7 @@ package server
 import (
 	"bufio"
 	"fmt"
+	"io"
 	"net"
 	"strconv"
 	"strings"
@@ -87,13 +88,18 @@ func sortRequest(conn net.Conn) *request {
 
 func sortRequest(conn net.Conn) *request {
 	req := request{Headers: make(map[string]string)}
+	var haveContentLength bool = false
 	var contentLength int
-	total := 0
+	total := 0 // For future contentLength check
 	scanner := bufio.NewReader(conn)
 
 	// 1. Deal with first line(Method, Path, Protocol)
-	line, err := scanner.ReadString('\n')
+	line, err := scanner.ReadString('\n') // Read the first line
 	if err != nil {
+		if err == io.EOF {
+			fmt.Println("Empty request")
+			return nil
+		}
 		fmt.Println("Error with ReadString: ", err)
 		return nil
 	}
@@ -102,32 +108,47 @@ func sortRequest(conn net.Conn) *request {
 		conn.Write([]byte("HTTP/1.1 405 Method Not Allowed\r\n\r\n"))
 		return nil
 	}
-	total += len(line) // Add number of bytes for next contentLength check
+	total += len(line)
 
 	for {
 		line, err := scanner.ReadString('\n')
 		if err != nil {
+			if err == io.EOF {
+				return nil
+			}
 			fmt.Println("Error with ReadString: ", err)
 			return nil
 		}
 		total += len(line)
 
-		if strings.Contains(line, "Content-Length:") {
-			contentLength, err = strconv.Atoi(strings.SplitN(line, " ", 2)[1])
+		if line == "\r\n" {
+			break
+		}
+
+		head := strings.SplitN(line, ": ", 2)
+		req.Headers[head[0]] = strings.TrimSpace(head[1])
+		if head[0] == "Content-Length" {
+			contentLength, err = strconv.Atoi(strings.TrimSpace(head[1]))
 			if err != nil {
 				fmt.Println("Error with strconv: ", err)
 				return nil
 			}
-			break
-
-		} else {
-			continue
 		}
 	}
 
-	for total < contentLength {
-
+	if !haveContentLength {
+		fmt.Println("411 Length Required")
+		return nil
 	}
+
+	body, err := io.ReadFull(scanner, make([]byte, contentLength))
+	if err != nil {
+		fmt.Println("Problem with reading the body part")
+		return nil
+	}
+	req.Body = string(body)
+
+	return &req
 }
 
 /*
@@ -178,6 +199,7 @@ func handleConnection(conn net.Conn) {
 }
 */
 
+// Check if head of the request is valid and put the relevant data to request struct
 func validHead(line string, req *request) bool {
 	methods := map[string]struct{}{
 		"GET":    {},
